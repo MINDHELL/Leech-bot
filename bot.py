@@ -22,7 +22,7 @@ async def start(_, message: Message):
 async def download_m3u8(_, message: Message):
     url = message.text.strip()
 
-    if not url.endswith(".m3u8"):
+    if not url.split("?")[0].endswith(".m3u8"):
         return await message.reply("❌ Please send a valid `.m3u8` link.")
 
     status = await message.reply("🔄 Starting download...")
