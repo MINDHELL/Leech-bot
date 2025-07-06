@@ -1,46 +1,66 @@
 import threading
+from health_check import start_health_check
 import os
 import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import Message
-from config import API_ID, API_HASH, BOT_TOKEN
 from yt_dlp import YoutubeDL
-from health_check import start_health_check
 
-bot = Client("leech_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+API_ID = 27788368
+API_HASH = "9df7e9ef3d7e4145270045e5e43e1081"
+BOT_TOKEN = "7725707727:AAHojaEgGdbw2a1tkA5L4XueeWtD44AumyM"
+
+bot = Client("m3u8_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+
+DOWNLOAD_DIR = "downloads"
 
 @bot.on_message(filters.private & filters.command("start"))
 async def start(_, message: Message):
-    await message.reply_text("👋 Send me a video URL (YouTube, etc.), and I'll fetch it for you!")
+    await message.reply_text("👋 Send me a `.m3u8` link and I’ll fetch the video for you.")
 
-@bot.on_message(filters.private & filters.text & ~filters.command(["start"]))
-async def download_and_send(_, message: Message):
+@bot.on_message(filters.private & filters.text & ~filters.command("start"))
+async def download_m3u8(_, message: Message):
     url = message.text.strip()
 
-    await message.reply_text("🔄 Downloading...")
+    if not url.endswith(".m3u8"):
+        return await message.reply("❌ Please send a valid `.m3u8` link.")
+
+    status = await message.reply("🔄 Starting download...")
+
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    filename = f"{message.from_user.id}_{message.id}.mp4"
+    output_path = os.path.join(DOWNLOAD_DIR, filename)
 
     ydl_opts = {
-        'outtmpl': 'downloads/%(title)s.%(ext)s',
-        'format': 'bestvideo+bestaudio/best',
-        'max_filesize': 2 * 1024 * 1024 * 1024,  # 2 GB limit
-        'merge_output_format': 'mp4',
+        'outtmpl': output_path,
+        'format': 'best',
+        'quiet': True,
+        'no_warnings': True,
+        'progress_hooks': [lambda d: asyncio.create_task(hook(d, status))],
     }
 
     try:
         with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            file_path = ydl.prepare_filename(info)
+            ydl.download([url])
     except Exception as e:
-        await message.reply_text(f"❌ Error: {e}")
-        return
+        return await status.edit(f"❌ Error:\n`{e}`")
 
-    await message.reply_text("📤 Uploading...")
-    try:
-        await message.reply_video(file_path, caption="✅ Here's your video!")
-    except Exception as e:
-        await message.reply_text(f"❌ Upload failed: {e}")
-    finally:
-        os.remove(file_path)
+    if os.path.getsize(output_path) > 2 * 1024 * 1024 * 1024:
+        return await status.edit("❌ File too large (>2GB) for Telegram.")
+
+    await status.edit("✅ Uploading...")
+    await message.reply_video(output_path, caption="🎥 Here's your video!")
+    await status.delete()
+    os.remove(output_path)
+
+async def hook(d, status_msg):
+    if d['status'] == 'downloading':
+        percent = d.get('_percent_str', '').strip()
+        speed = d.get('_speed_str', '').strip()
+        eta = d.get('eta', 'N/A')
+        await status_msg.edit(f"⬇️ Downloading...\n📊 {percent} at {speed}\n⏱ ETA: {eta}s")
+    elif d['status'] == 'finished':
+        await status_msg.edit("✅ Download finished. Uploading...")
 
 # 🔰 Run the Bot
 if __name__ == "__main__":
