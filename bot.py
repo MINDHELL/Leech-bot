@@ -2,15 +2,17 @@ import threading
 from health_check import start_health_check
 import os
 import asyncio
+import re
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
-# Replace with your bot credentials
 API_ID = 27788368
 API_HASH = "9df7e9ef3d7e4145270045e5e43e1081"
 BOT_TOKEN = "7725707727:AAHojaEgGdbw2a1tkA5L4XueeWtD44AumyM"
 
 bot = Client("m3u8_universal_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+
+progress_pattern = re.compile(r"(\d{1,3}\.\d)%.*?at\s+([\d\.]+[KMG]?iB/s).*?ETA\s+([\d:]+)")
 
 @bot.on_message(filters.command("start"))
 async def start(_, msg: Message):
@@ -45,7 +47,7 @@ async def process(_, msg: Message):
     if not url or "m3u8" not in url:
         return await msg.reply("❌ Please provide a valid `.m3u8` link.")
 
-    progress_msg = await msg.reply("⏳ Preparing download...")
+    progress_msg = await msg.reply("⏳ Starting download...")
 
     try:
         output_file = "video.mp4"
@@ -64,15 +66,22 @@ async def process(_, msg: Message):
             stderr=asyncio.subprocess.STDOUT,
         )
 
-        # Realtime progress read
         while True:
             line = await process.stdout.readline()
             if not line:
                 break
 
             decoded = line.decode(errors="ignore").strip()
-            if "%" in decoded and "ETA" in decoded:
-                await progress_msg.edit(f"📥 {decoded}")
+
+            # Only extract and show clean progress info
+            match = progress_pattern.search(decoded)
+            if match:
+                percent, speed, eta = match.groups()
+                await progress_msg.edit(
+                    f"⬇️ Downloading...\n"
+                    f"📊 {percent}% at {speed}\n"
+                    f"⏱ ETA: {eta}"
+                )
 
         await process.wait()
 
@@ -85,8 +94,7 @@ async def process(_, msg: Message):
         os.remove(output_file)
 
     except Exception as e:
-        await progress_msg.edit(f"⚠️ Error:\n`{e}`")
-
+        await progress_msg.edit(f"⚠️ Error:\n`{str(e)[:3000]}`")  # Max length safety
 
 # 🔰 Run the Bot
 if __name__ == "__main__":
