@@ -92,7 +92,7 @@ async def process(_, msg: Message):
             error_chunks = [collected_output[i:i+3000] for i in range(0, len(collected_output), 3000)]
             await progress_msg.edit("❌ Download failed. Sending log...")
             for i, chunk in enumerate(error_chunks[:3]):
-                await msg.reply(f"⚠️ Error Log Part {i+1}:\n```{chunk}```", quote=False, parse_mode="Markdown")
+                await msg.reply(f"⚠️ Error Log Part {i+1}:\n{chunk}", quote=False)
             return
 
         if os.path.getsize(output_file) >= 1900 * 1024 * 1024:
