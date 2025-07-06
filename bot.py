@@ -12,7 +12,6 @@ BOT_TOKEN = "7725707727:AAHojaEgGdbw2a1tkA5L4XueeWtD44AumyM"
 
 bot = Client("m3u8_universal_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# Pattern to extract % / speed / ETA from yt-dlp output
 progress_pattern = re.compile(r"(\d{1,3}\.\d)%.*?at\s+([\d\.]+[KMG]?iB/s).*?ETA\s+([\d:]+)")
 
 @bot.on_message(filters.command("start"))
@@ -31,9 +30,7 @@ async def process(_, msg: Message):
     text = msg.text.strip()
     lines = text.splitlines()
 
-    url = None
-    referer = None
-    user_agent = None
+    url = referer = user_agent = None
 
     for line in lines:
         if "m3u8" in line and line.startswith("http"):
@@ -67,13 +64,15 @@ async def process(_, msg: Message):
             stderr=asyncio.subprocess.STDOUT,
         )
 
-        # Read real-time output
+        collected_output = ""
         while True:
             line = await process.stdout.readline()
             if not line:
                 break
 
             decoded = line.decode(errors="ignore").strip()
+            collected_output += decoded + "\n"
+
             match = progress_pattern.search(decoded)
             if match:
                 percent, speed, eta = match.groups()
@@ -84,29 +83,29 @@ async def process(_, msg: Message):
                         f"⏱ ETA: {eta}"
                     )
                 except:
-                    pass  # Avoid update failure due to Telegram limits
+                    pass  # ignore Telegram message too long issues
 
         await process.wait()
 
         if process.returncode != 0 or not os.path.exists(output_file):
-            try:
-                # Try reading full output if exists
-                output = await process.stdout.read()
-                err_text = output.decode(errors="ignore")
-                chunks = [err_text[i:i+3000] for i in range(0, len(err_text), 3000)]
-                await progress_msg.edit("❌ Download failed. Sending error log...")
-                for i, chunk in enumerate(chunks[:3]):
-                    await msg.reply(f"⚠️ Error Part {i+1}:\n\n`{chunk}`", quote=False)
-            except Exception as e:
-                await progress_msg.edit(f"❌ Unexpected error:\n`{str(e)[:3000]}`")
+            # Send output in parts if failed
+            error_chunks = [collected_output[i:i+3000] for i in range(0, len(collected_output), 3000)]
+            await progress_msg.edit("❌ Download failed. Sending log...")
+            for i, chunk in enumerate(error_chunks[:3]):
+                await msg.reply(f"⚠️ Error Log Part {i+1}:\n```{chunk}```", quote=False, parse_mode="markdown")
             return
+
+        if os.path.getsize(output_file) >= 1900 * 1024 * 1024:
+            return await progress_msg.edit("⚠️ Video too large (>1.9GB). Telegram upload may fail. Compress or split first.")
 
         await progress_msg.edit("📤 Uploading video...")
         await msg.reply_video(output_file, caption="✅ Here's your video!")
+
         os.remove(output_file)
 
     except Exception as e:
         await progress_msg.edit(f"⚠️ Error:\n`{str(e)[:3000]}`")
+
 
 
 # 🔰 Run the Bot
