@@ -4,51 +4,89 @@ import os
 import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import Message
-import subprocess
 
-# 🔐 Replace with your details
+# Replace with your bot credentials
 API_ID = 27788368
 API_HASH = "9df7e9ef3d7e4145270045e5e43e1081"
 BOT_TOKEN = "7725707727:AAHojaEgGdbw2a1tkA5L4XueeWtD44AumyM"
 
-bot = Client("m3u8_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+bot = Client("m3u8_universal_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 @bot.on_message(filters.command("start"))
 async def start(_, msg: Message):
-    await msg.reply("🎥 Send me a `.m3u8` link and I'll download & send the video.")
+    await msg.reply(
+        "🎬 *Send a `.m3u8` link to download video.*\n\n"
+        "**Optional format:**\n"
+        "`URL: <link>`\n"
+        "`Referer: <ref>` (optional)\n"
+        "`User-Agent: <ua>` (optional)",
+        quote=True
+    )
 
 @bot.on_message(filters.text & filters.private)
-async def download_m3u8(_, msg: Message):
-    m3u8_url = msg.text.strip()
+async def process(_, msg: Message):
+    text = msg.text.strip()
+    lines = text.splitlines()
 
-    if not m3u8_url.endswith(".m3u8"):
-        return await msg.reply("❌ Please send a valid `.m3u8` link.")
+    url = None
+    referer = None
+    user_agent = None
 
-    await msg.reply("⏬ Downloading and processing... Please wait.")
+    for line in lines:
+        if "m3u8" in line and line.startswith("http"):
+            url = line.strip()
+        elif line.lower().startswith("url:"):
+            url = line.split(":", 1)[1].strip()
+        elif line.lower().startswith("referer:"):
+            referer = line.split(":", 1)[1].strip()
+        elif line.lower().startswith("user-agent:"):
+            user_agent = line.split(":", 1)[1].strip()
+
+    if not url or "m3u8" not in url:
+        return await msg.reply("❌ Please provide a valid `.m3u8` link.")
+
+    progress_msg = await msg.reply("⏳ Preparing download...")
 
     try:
         output_file = "video.mp4"
+        command = ["yt-dlp", "-o", output_file]
 
-        command = [
-            "yt-dlp",
-            "--referer", "https://www.xnxx.com/",
-            "--user-agent", "Mozilla/5.0",
-            "-o", output_file,
-            m3u8_url
-        ]
+        if referer:
+            command += ["--referer", referer]
+        if user_agent:
+            command += ["--user-agent", user_agent]
 
-        process = await asyncio.create_subprocess_exec(*command)
-        await process.communicate()
+        command.append(url)
 
-        if not os.path.exists(output_file):
-            return await msg.reply("❌ Failed to download the video.")
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
 
+        # Realtime progress read
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+
+            decoded = line.decode(errors="ignore").strip()
+            if "%" in decoded and "ETA" in decoded:
+                await progress_msg.edit(f"📥 {decoded}")
+
+        await process.wait()
+
+        if process.returncode != 0 or not os.path.exists(output_file):
+            return await progress_msg.edit("❌ Download failed.")
+
+        await progress_msg.edit("📤 Uploading video...")
         await msg.reply_video(output_file, caption="✅ Here's your video!")
 
         os.remove(output_file)
 
     except Exception as e:
-        await msg.reply(f"⚠️ Error:\n`{e}`")
+        await progress_msg.edit(f"⚠️ Error:\n`{e}`")
+
 
 # 🔰 Run the Bot
 if __name__ == "__main__":
