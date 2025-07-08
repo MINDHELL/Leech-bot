@@ -84,5 +84,5 @@ async def main():
 
 # 🔰 Run the Bot
 if __name__ == "__main__":
-    threading.Thread(target=start_health_check, daemon=True).start()
-    bot.run()
+    start_health_check()
+    asyncio.run(main())
