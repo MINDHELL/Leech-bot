@@ -1,15 +1,14 @@
-# Use a minimal Python image
+# Use a lightweight Python image
 FROM python:3.11-slim
 
-# Set working directory
+# Set working directory inside container
 WORKDIR /app
 
-# Copy project files
-COPY twitter_bot.py /app/
-COPY requirements.txt /app/
+# Copy all files from current directory to container
+COPY . /app/
 
-# Install required packages
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Default run command
+# Run the bot
 CMD ["python", "twitter_bot.py"]
