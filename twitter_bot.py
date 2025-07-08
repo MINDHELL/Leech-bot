@@ -1,33 +1,26 @@
-import asyncio
 import os
-import time
 import requests
-from pyrogram import Client
-from pyrogram.types import InputMediaVideo, InputMediaPhoto
+import asyncio
+from pyrogram import Client, filters, idle
+from pyrogram.types import Message, InputMediaPhoto, InputMediaVideo
 from health_check import start_health_check
 
-# === CONFIG ===
+# ==== CONFIG ====
 API_ID = int(os.environ.get("API_ID", 27788368))
 API_HASH = os.environ.get("API_HASH", "9df7e9ef3d7e4145270045e5e43e1081")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "7769792227:AAHTVq8KCOHYg9oZOBvGszU3bms7BsH94k0")
-CHANNEL_ID = int(os.environ.get("CHANNEL_ID", -1002682688904))
+CHANNEL_ID = int(os.environ.get("CHANNEL_ID", -1002682688904))  # Your private channel
 
-# Add your tweet links here
-TWEET_LINKS = [
-    "https://twitter.com/HoodiiiDurant/status/1942522168732180806"
-]
-
-# === Initialize Pyrogram Bot ===
+# ==== INIT ====
 app = Client("twitter_dl_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# === Extract media & caption using vxtwitter API ===
+
+# ==== Extract media from vxtwitter API ====
 def extract_from_vxtwitter(tweet_url):
     try:
         tweet_id = tweet_url.split("/status/")[1].split("?")[0]
         api_url = f"https://api.vxtwitter.com/Twitter/status/{tweet_id}"
-
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(api_url, headers=headers, timeout=10)
+        response = requests.get(api_url, timeout=10)
 
         if response.status_code != 200:
             print(f"❌ API error {response.status_code} for: {tweet_url}")
@@ -35,58 +28,93 @@ def extract_from_vxtwitter(tweet_url):
 
         data = response.json()
         caption = data.get("text", "")
-        media_urls = []
+        media_list = []
 
         for item in data.get("media", []):
             mtype = item.get("type")
             url = item.get("url")
             if mtype == "photo":
-                media_urls.append(("photo", url))
+                media_list.append(("photo", url))
             elif mtype == "video":
-                media_urls.append(("video", url))
+                media_list.append(("video", url))
 
-        return caption, media_urls
+        return caption, media_list
+
     except Exception as e:
-        print("❌ Exception while fetching media:", e)
+        print("❌ Exception:", e)
         return None, None
 
-# === Bot Logic ===
+
+# ==== /start command ====
+@app.on_message(filters.command("start") & filters.private)
+async def start_command(client: Client, message: Message):
+    await message.reply(
+        "👋 Hello! I can download videos and images from Tweet links.\n\n"
+        "Send a tweet link directly or use:\n`/get <tweet link>`",
+        quote=True
+    )
+
+
+# ==== /get command ====
+@app.on_message(filters.command("get") & filters.private)
+async def get_command(client: Client, message: Message):
+    if len(message.command) < 2:
+        return await message.reply("⚠️ Please send a tweet link.\n\nExample:\n`/get https://twitter.com/...`")
+
+    tweet_url = message.command[1]
+    caption, media = extract_from_vxtwitter(tweet_url)
+
+    if not media:
+        return await message.reply("⚠️ No media found for this tweet.")
+
+    try:
+        group = []
+        for i, (mtype, url) in enumerate(media):
+            if mtype == "photo":
+                group.append(InputMediaPhoto(media=url, caption=caption if i == 0 else None))
+            elif mtype == "video":
+                group.append(InputMediaVideo(media=url, caption=caption if i == 0 else None))
+
+        # Reply to user
+        if len(group) == 1:
+            if group[0].media.endswith(".mp4"):
+                await message.reply_video(group[0].media, caption=caption)
+            else:
+                await message.reply_photo(group[0].media, caption=caption)
+        else:
+            await message.reply_media_group(group)
+
+        # Send to private channel as well
+        await client.send_message(CHANNEL_ID, f"📥 From user {message.from_user.id}\n🔗 {tweet_url}")
+        if len(group) == 1:
+            if group[0].media.endswith(".mp4"):
+                await client.send_video(CHANNEL_ID, group[0].media, caption=caption)
+            else:
+                await client.send_photo(CHANNEL_ID, group[0].media, caption=caption)
+        else:
+            await client.send_media_group(CHANNEL_ID, group)
+
+        print(f"✅ Sent media for: {tweet_url}")
+
+    except Exception as e:
+        await message.reply(f"❌ Telegram error:\n`{e}`")
+
+
+# ==== Auto-detect raw links ====
+@app.on_message(filters.private & filters.text)
+async def detect_link(client: Client, message: Message):
+    if "twitter.com" in message.text or "x.com" in message.text:
+        message.text = f"/get {message.text}"
+        await get_command(client, message)
+
+
+# ==== Run Bot ====
 async def main():
     await app.start()
-    print("🤖 Bot started... Monitoring tweet links")
+    print("🤖 Bot started. Waiting for messages...")
+    await idle()  # Keeps it alive for commands
 
-    while True:
-        for tweet in TWEET_LINKS:
-            caption, media = extract_from_vxtwitter(tweet)
 
-            if not media:
-                print(f"⚠️ No media found for: {tweet}")
-                continue
-
-            try:
-                group = []
-                for i, (mtype, url) in enumerate(media):
-                    if mtype == "photo":
-                        group.append(InputMediaPhoto(media=url, caption=caption if i == 0 else None))
-                    elif mtype == "video":
-                        group.append(InputMediaVideo(media=url, caption=caption if i == 0 else None))
-
-                if len(group) == 1:
-                    if group[0].media.endswith(".mp4"):
-                        await app.send_video(CHANNEL_ID, group[0].media, caption=f"{caption}\n🔗 {tweet}")
-                    else:
-                        await app.send_photo(CHANNEL_ID, group[0].media, caption=f"{caption}\n🔗 {tweet}")
-                else:
-                    await app.send_media_group(CHANNEL_ID, group)
-
-                print(f"✅ Sent: {tweet}")
-            except Exception as e:
-                print(f"❌ Telegram error: {e}")
-
-        print("🕒 Sleeping 30 minutes before checking again...")
-        await asyncio.sleep(1800)  # 30 minutes
-
-# === Run the bot ===
 if __name__ == "__main__":
     start_health_check()
     asyncio.run(main())
