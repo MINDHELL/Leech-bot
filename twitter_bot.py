@@ -9,8 +9,7 @@ from health_check import start_health_check
 API_ID = int(os.environ.get("API_ID", 27788368))
 API_HASH = os.environ.get("API_HASH", "9df7e9ef3d7e4145270045e5e43e1081")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "7769792227:AAHTVq8KCOHYg9oZOBvGszU3bms7BsH94k0")
-CHANNEL_ID = int(os.environ.get("CHANNEL_ID", -1002682688904))  # your private channel ID
-ADMIN_ID = 6860316927  # 👈 your personal Telegram user ID
+ADMIN_ID = 6860316927  # Your Telegram user ID to get startup alert
 
 # ==== INIT ====
 app = Client("twitter_dl_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
@@ -49,9 +48,10 @@ def extract_from_vxtwitter(tweet_url):
 # ==== /start ====
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client: Client, message: Message):
+    print("📥 /start received")
     await message.reply(
-        "👋 Hello! I can download Twitter/X videos and images.\n\n"
-        "Send a tweet link directly or use:\n"
+        "👋 I'm alive!\n\n"
+        "Just send a tweet link or use:\n"
         "`/get <tweet link>`",
         quote=True
     )
@@ -61,7 +61,7 @@ async def start_command(client: Client, message: Message):
 @app.on_message(filters.command("get") & filters.private)
 async def get_command(client: Client, message: Message):
     if len(message.command) < 2:
-        return await message.reply("⚠️ Please send a valid tweet link.\n\nExample:\n`/get https://twitter.com/...`")
+        return await message.reply("⚠️ Please send a tweet link.\n\nExample:\n`/get https://twitter.com/...`")
 
     tweet_url = message.command[1]
     caption, media = extract_from_vxtwitter(tweet_url)
@@ -86,23 +86,13 @@ async def get_command(client: Client, message: Message):
         else:
             await message.reply_media_group(group)
 
-        # Send to private channel
-        await client.send_message(CHANNEL_ID, f"📥 From user {message.from_user.id}\n🔗 {tweet_url}")
-        if len(group) == 1:
-            if group[0].media.endswith(".mp4"):
-                await client.send_video(CHANNEL_ID, group[0].media, caption=caption)
-            else:
-                await client.send_photo(CHANNEL_ID, group[0].media, caption=caption)
-        else:
-            await client.send_media_group(CHANNEL_ID, group)
-
         print(f"✅ Sent media for: {tweet_url}")
 
     except Exception as e:
         await message.reply(f"❌ Telegram error:\n`{e}`")
 
 
-# ==== Auto-detect tweet link without /get ====
+# ==== Auto-detect raw links ====
 @app.on_message(filters.private & filters.text)
 async def detect_link(client: Client, message: Message):
     if "twitter.com" in message.text or "x.com" in message.text:
@@ -110,14 +100,14 @@ async def detect_link(client: Client, message: Message):
         await get_command(client, message)
 
 
-# ==== Start bot + health check ====
+# ==== Run Bot ====
 async def main():
     await app.start()
     print("🤖 Bot started. Waiting for messages...")
 
-    # ✅ Notify admin when bot goes online
+    # ✅ Send startup message to you
     try:
-        await app.send_message(ADMIN_ID, "✅ Bot is now online and running on Koyeb!")
+        await app.send_message(ADMIN_ID, "✅ Bot is now online and ready!")
     except Exception as e:
         print("⚠️ Couldn't notify admin:", e)
 
