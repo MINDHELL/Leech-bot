@@ -35,10 +35,31 @@ def generate_progress_bar(percentage):
 
 def create_download_hook(status_msg: Message):
     last_edit = time.time()
+    cancel_timer = [None]
+
+    def start_cancel_timer():
+        def cancel():
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    status_msg.edit_text("❌ Download stalled. Cancelled after 10s."),
+                    bot.loop
+                )
+            except:
+                pass
+        cancel_timer[0] = threading.Timer(10, cancel)
+        cancel_timer[0].start()
+
+    def reset_cancel_timer():
+        if cancel_timer[0]:
+            cancel_timer[0].cancel()
+        start_cancel_timer()
+
+    start_cancel_timer()
 
     def hook(d):
         nonlocal last_edit
         if d['status'] == 'downloading':
+            reset_cancel_timer()
             now = time.time()
             if now - last_edit >= 5:
                 downloaded = d.get("downloaded_bytes", 0)
@@ -154,6 +175,8 @@ async def download_and_send(_, message: Message):
             'key': 'FFmpegVideoConvertor',
             'preferedformat': 'mp4',
         }],
+        'external_downloader': 'ffmpeg',
+        'external_downloader_args': ['-timeout', '10', '--hls-use-mpegts']
     }
 
     file_path = None
