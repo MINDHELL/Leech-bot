@@ -53,7 +53,8 @@ def create_download_hook(status_msg: Message):
                     f"ETA: **{eta}**"
                 )
 
-                asyncio.create_task(status_msg.edit_text(msg))
+                # Use thread-safe coroutine call for Pyrogram loop
+                asyncio.run_coroutine_threadsafe(status_msg.edit_text(msg), bot.loop)
                 last_edit = now
 
     return hook
@@ -71,6 +72,7 @@ async def upload_progress(current, total, status_msg: Message):
             f"Size: **{size}**"
         )
         await status_msg.edit_text(msg)
+        await asyncio.sleep(1)  # throttle update frequency
     except:
         pass
 
@@ -85,31 +87,57 @@ async def download_and_send(_, message: Message):
     url = message.text.strip()
     status = await message.reply_text("🔄 Preparing to download...")
 
+    os.makedirs("downloads", exist_ok=True)
+
     ydl_opts = {
         'outtmpl': 'downloads/%(title)s.%(ext)s',
         'format': 'bestvideo+bestaudio/best',
         'max_filesize': 2 * 1024 * 1024 * 1024,
         'merge_output_format': 'mp4',
         'progress_hooks': [create_download_hook(status)],
-        'noplaylist': True
+        'noplaylist': True,
+        'no_part': True
     }
+
+    file_path = None
+    thumb_path = "thumb.jpg"
 
     try:
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             file_path = ydl.prepare_filename(info)
+
+        # Check file size before uploading
+        file_size = os.path.getsize(file_path)
+        if file_size > 2 * 1024 * 1024 * 1024:
+            await status.edit_text("❌ File too large for Telegram bots (limit: 2GB).")
+            os.remove(file_path)
+            return
+
+        # Generate thumbnail using ffmpeg
+        os.system(f"ffmpeg -ss 00:00:05 -i '{file_path}' -frames:v 1 -q:v 2 '{thumb_path}'")
+
     except Exception as e:
         await status.edit_text(f"❌ Download error: `{e}`")
         return
 
     await status.edit_text("📤 Uploading...")
+
     try:
-        await message.reply_video(file_path, caption="✅ Here's your video!", progress=upload_progress, progress_args=(status,))
+        await message.reply_video(
+            video=file_path,
+            caption="✅ Here's your video!",
+            thumb=thumb_path if os.path.exists(thumb_path) else None,
+            progress=upload_progress,
+            progress_args=(status,)
+        )
     except Exception as e:
         await status.edit_text(f"❌ Upload failed: `{e}`")
     finally:
-        if os.path.exists(file_path):
+        if file_path and os.path.exists(file_path):
             os.remove(file_path)
+        if os.path.exists(thumb_path):
+            os.remove(thumb_path)
 
 
 # 🔰 Run the Bot
