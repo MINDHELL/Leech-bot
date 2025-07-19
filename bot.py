@@ -8,6 +8,7 @@ from config import API_ID, API_HASH, BOT_TOKEN
 from yt_dlp import YoutubeDL
 from health_check import start_health_check
 import ffmpeg
+from pyrogram.errors import FloodWait
 
 bot = Client("leech_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
@@ -37,7 +38,7 @@ def create_download_hook(status_msg: Message):
         nonlocal last_edit
         if d['status'] == 'downloading':
             now = time.time()
-            if now - last_edit >= 2:
+            if now - last_edit >= 5:  # Throttle to 5s
                 downloaded = d.get("downloaded_bytes", 0)
                 total = d.get("total_bytes", 0) or d.get("total_bytes_estimate", 0)
                 percent = (downloaded / total * 100) if total else 0
@@ -54,7 +55,16 @@ def create_download_hook(status_msg: Message):
                     f"ETA: **{eta}**"
                 )
 
-                asyncio.run_coroutine_threadsafe(status_msg.edit_text(msg), bot.loop)
+                async def safe_edit():
+                    try:
+                        await status_msg.edit_text(msg)
+                    except FloodWait as e:
+                        await asyncio.sleep(e.value)
+                        await status_msg.edit_text(msg)
+                    except:
+                        pass
+
+                asyncio.run_coroutine_threadsafe(safe_edit(), bot.loop)
                 last_edit = now
 
     return hook
@@ -62,16 +72,25 @@ def create_download_hook(status_msg: Message):
 
 async def upload_progress(current, total, status_msg: Message):
     try:
-        percent = (current / total) * 100
-        bar = generate_progress_bar(percent)
-        size = f"{human_readable_size(current)} / {human_readable_size(total)}"
+        now = time.time()
+        if not hasattr(upload_progress, "last_edit") or now - upload_progress.last_edit >= 5:
+            upload_progress.last_edit = now
+            percent = (current / total) * 100
+            bar = generate_progress_bar(percent)
+            size = f"{human_readable_size(current)} / {human_readable_size(total)}"
 
-        msg = (
-            f"📤 **Uploading...**\n\n"
-            f"{bar}\n"
-            f"Size: **{size}**"
-        )
-        await status_msg.edit_text(msg)
+            msg = (
+                f"📤 **Uploading...**\n\n"
+                f"{bar}\n"
+                f"Size: **{size}**"
+            )
+            try:
+                await status_msg.edit_text(msg)
+            except FloodWait as e:
+                await asyncio.sleep(e.value)
+                await status_msg.edit_text(msg)
+            except:
+                pass
     except:
         pass
 
@@ -139,14 +158,21 @@ async def download_and_send(_, message: Message):
             os.remove(file_path)
             return
 
-        # Generate thumbnail
         thumb_path = extract_thumbnail(file_path)
 
     except Exception as e:
-        await status.edit_text(f"❌ Download error: `{e}`")
+        try:
+            await status.edit_text(f"❌ Download error: `{e}`")
+        except FloodWait as e2:
+            await asyncio.sleep(e2.value)
+            await status.edit_text(f"❌ Download error: `{e}`")
         return
 
-    await status.edit_text("📤 Uploading...")
+    try:
+        await status.edit_text("📤 Uploading...")
+    except FloodWait as e:
+        await asyncio.sleep(e.value)
+        await status.edit_text("📤 Uploading...")
 
     try:
         await message.reply_video(
@@ -158,7 +184,11 @@ async def download_and_send(_, message: Message):
             progress_args=(status,)
         )
     except Exception as e:
-        await status.edit_text(f"❌ Upload failed: `{e}`")
+        try:
+            await status.edit_text(f"❌ Upload failed: `{e}`")
+        except FloodWait as e2:
+            await asyncio.sleep(e2.value)
+            await status.edit_text(f"❌ Upload failed: `{e}`")
     finally:
         try:
             if file_path and os.path.exists(file_path):
