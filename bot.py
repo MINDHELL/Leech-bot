@@ -2,6 +2,8 @@ import os
 import asyncio
 import time
 import threading
+import subprocess
+import json
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from config import API_ID, API_HASH, BOT_TOKEN
@@ -38,7 +40,7 @@ def create_download_hook(status_msg: Message):
         nonlocal last_edit
         if d['status'] == 'downloading':
             now = time.time()
-            if now - last_edit >= 5:  # Throttle to 5s
+            if now - last_edit >= 5:
                 downloaded = d.get("downloaded_bytes", 0)
                 total = d.get("total_bytes", 0) or d.get("total_bytes_estimate", 0)
                 percent = (downloaded / total * 100) if total else 0
@@ -109,6 +111,19 @@ def extract_thumbnail(video_path, thumb_path="thumb.jpg"):
         return None
 
 
+def get_video_duration(video_path):
+    try:
+        result = subprocess.run([
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "json", video_path
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        duration = float(json.loads(result.stdout)["format"]["duration"])
+        return int(duration)
+    except:
+        return None
+
+
 @bot.on_message(filters.private & filters.command("start"))
 async def start(_, message: Message):
     await message.reply_text("👋 Send me a video URL (YouTube, m3u8, etc.), and I'll fetch it for you!")
@@ -159,6 +174,7 @@ async def download_and_send(_, message: Message):
             return
 
         thumb_path = extract_thumbnail(file_path)
+        duration = get_video_duration(file_path)
 
     except Exception as e:
         try:
@@ -180,6 +196,7 @@ async def download_and_send(_, message: Message):
             caption="✅ Here's your video!",
             thumb=thumb_path if thumb_path and os.path.exists(thumb_path) else None,
             supports_streaming=True,
+            duration=duration,
             progress=upload_progress,
             progress_args=(status,)
         )
