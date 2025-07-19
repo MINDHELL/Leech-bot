@@ -160,7 +160,7 @@ async def download_and_send(_, message: Message):
     status = await message.reply_text("🔄 Preparing to download...")
 
     os.makedirs("downloads", exist_ok=True)
-    output_template = "downloads/%(title)s.%(ext)s"
+    output_template = "downloads/%(title).50s.%(ext)s"
 
     ydl_opts = {
         'outtmpl': output_template,
@@ -176,7 +176,8 @@ async def download_and_send(_, message: Message):
             'preferedformat': 'mp4',
         }],
         'external_downloader': 'ffmpeg',
-        'external_downloader_args': ['-timeout', '10', '--hls-use-mpegts']
+        'external_downloader_args': ['-timeout', '10', '--hls-use-mpegts'],
+        'ignoreerrors': True,
     }
 
     file_path = None
@@ -185,6 +186,9 @@ async def download_and_send(_, message: Message):
     try:
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
+            if info is None:
+                await status.edit_text("❌ Unable to extract video info.")
+                return
             file_path = ydl.prepare_filename(info)
 
         if not os.path.exists(file_path):
