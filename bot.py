@@ -10,24 +10,21 @@ from health_check import start_health_check
 
 bot = Client("leech_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-
 def human_readable_size(size):
     if not size:
         return "0B"
     power = 1024
     n = 0
     Dic_powerN = {0: '', 1: 'Ki', 2: 'Mi', 3: 'Gi', 4: 'Ti'}
-    while size > power:
+    while size > power and n < 4:
         size /= power
         n += 1
     return f"{round(size, 2)} {Dic_powerN[n]}B"
-
 
 def generate_progress_bar(percentage):
     filled_length = int(percentage // 10)
     bar = '▰' * filled_length + '▱' * (10 - filled_length)
     return f"[{bar}] {percentage:.2f}%"
-
 
 def create_download_hook(status_msg: Message):
     last_edit = time.time()
@@ -58,13 +55,11 @@ def create_download_hook(status_msg: Message):
 
     return hook
 
-
 async def upload_progress(current, total, status_msg: Message):
     try:
         percent = (current / total) * 100
         bar = generate_progress_bar(percent)
         size = f"{human_readable_size(current)} / {human_readable_size(total)}"
-
         msg = (
             f"📤 **Uploading...**\n\n"
             f"{bar}\n"
@@ -75,27 +70,34 @@ async def upload_progress(current, total, status_msg: Message):
     except:
         pass
 
-
 @bot.on_message(filters.private & filters.command("start"))
 async def start(_, message: Message):
-    await message.reply_text("👋 Send me a video URL (YouTube, etc.), and I'll fetch it for you!")
-
+    await message.reply_text("👋 Send me any video URL (.m3u8, YouTube, etc.) and I’ll fetch it!")
 
 @bot.on_message(filters.private & filters.text & ~filters.command(["start"]))
 async def download_and_send(_, message: Message):
     url = message.text.strip()
+    if not (url.startswith("http://") or url.startswith("https://")):
+        await message.reply_text("❌ Please send a valid video URL (starts with http/https).")
+        return
+
     status = await message.reply_text("🔄 Preparing to download...")
 
     os.makedirs("downloads", exist_ok=True)
 
     ydl_opts = {
-        'outtmpl': 'downloads/%(title)s.%(ext)s',
+        'outtmpl': 'downloads/%(title).100s.%(ext)s',
         'format': 'bestvideo+bestaudio/best',
         'merge_output_format': 'mp4',
         'max_filesize': 2 * 1024 * 1024 * 1024,  # 2GB
         'noplaylist': True,
         'no_part': True,
         'progress_hooks': [create_download_hook(status)],
+        'quiet': True,
+        'postprocessors': [{
+            'key': 'FFmpegVideoConvertor',
+            'preferedformat': 'mp4'
+        }]
     }
 
     file_path = None
@@ -110,14 +112,13 @@ async def download_and_send(_, message: Message):
             await status.edit_text("❌ Failed to download the video file.")
             return
 
-        # Check Telegram's 2GB limit
         if os.path.getsize(file_path) > 2 * 1024 * 1024 * 1024:
             await status.edit_text("❌ File too large to upload via Telegram bot (limit: 2GB).")
             os.remove(file_path)
             return
 
-        # Generate thumbnail
-        os.system(f"ffmpeg -ss 00:00:05 -i '{file_path}' -frames:v 1 -q:v 2 '{thumb_path}'")
+        # Generate thumbnail using ffmpeg (first frame)
+        os.system(f"ffmpeg -ss 00:00:01 -i '{file_path}' -frames:v 1 -q:v 2 '{thumb_path}' -y")
 
     except Exception as e:
         await status.edit_text(f"❌ Download error: `{e}`")
@@ -131,7 +132,8 @@ async def download_and_send(_, message: Message):
             caption="✅ Here's your video!",
             thumb=thumb_path if os.path.exists(thumb_path) else None,
             progress=upload_progress,
-            progress_args=(status,)
+            progress_args=(status,),
+            supports_streaming=True
         )
     except Exception as e:
         await status.edit_text(f"❌ Upload failed: `{e}`")
@@ -140,7 +142,6 @@ async def download_and_send(_, message: Message):
             os.remove(file_path)
         if os.path.exists(thumb_path):
             os.remove(thumb_path)
-
 
 if __name__ == "__main__":
     threading.Thread(target=start_health_check, daemon=True).start()
