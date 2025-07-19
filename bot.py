@@ -7,8 +7,10 @@ from pyrogram.types import Message
 from config import API_ID, API_HASH, BOT_TOKEN
 from yt_dlp import YoutubeDL
 from health_check import start_health_check
+import ffmpeg
 
 bot = Client("leech_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+
 
 def human_readable_size(size):
     if not size:
@@ -16,15 +18,17 @@ def human_readable_size(size):
     power = 1024
     n = 0
     Dic_powerN = {0: '', 1: 'Ki', 2: 'Mi', 3: 'Gi', 4: 'Ti'}
-    while size > power and n < 4:
+    while size > power:
         size /= power
         n += 1
     return f"{round(size, 2)} {Dic_powerN[n]}B"
+
 
 def generate_progress_bar(percentage):
     filled_length = int(percentage // 10)
     bar = '▰' * filled_length + '▱' * (10 - filled_length)
     return f"[{bar}] {percentage:.2f}%"
+
 
 def create_download_hook(status_msg: Message):
     last_edit = time.time()
@@ -55,49 +59,67 @@ def create_download_hook(status_msg: Message):
 
     return hook
 
+
 async def upload_progress(current, total, status_msg: Message):
     try:
         percent = (current / total) * 100
         bar = generate_progress_bar(percent)
         size = f"{human_readable_size(current)} / {human_readable_size(total)}"
+
         msg = (
             f"📤 **Uploading...**\n\n"
             f"{bar}\n"
             f"Size: **{size}**"
         )
         await status_msg.edit_text(msg)
-        await asyncio.sleep(1)
     except:
         pass
 
+
+def extract_thumbnail(video_path, thumb_path="thumb.jpg"):
+    try:
+        (
+            ffmpeg
+            .input(video_path, ss=3)
+            .output(thumb_path, vframes=1)
+            .overwrite_output()
+            .run(capture_stdout=True, capture_stderr=True)
+        )
+        return thumb_path if os.path.exists(thumb_path) else None
+    except Exception:
+        return None
+
+
 @bot.on_message(filters.private & filters.command("start"))
 async def start(_, message: Message):
-    await message.reply_text("👋 Send me any video URL (.m3u8, YouTube, etc.) and I’ll fetch it!")
+    await message.reply_text("👋 Send me a video URL (YouTube, m3u8, etc.), and I'll fetch it for you!")
+
 
 @bot.on_message(filters.private & filters.text & ~filters.command(["start"]))
 async def download_and_send(_, message: Message):
     url = message.text.strip()
-    if not (url.startswith("http://") or url.startswith("https://")):
-        await message.reply_text("❌ Please send a valid video URL (starts with http/https).")
+    if not url.startswith("http"):
+        await message.reply("❌ Please send a valid video URL starting with http/https.")
         return
 
     status = await message.reply_text("🔄 Preparing to download...")
 
     os.makedirs("downloads", exist_ok=True)
+    output_template = "downloads/%(title)s.%(ext)s"
 
     ydl_opts = {
-        'outtmpl': 'downloads/%(title).100s.%(ext)s',
+        'outtmpl': output_template,
         'format': 'bestvideo+bestaudio/best',
-        'merge_output_format': 'mp4',
         'max_filesize': 2 * 1024 * 1024 * 1024,  # 2GB
+        'merge_output_format': 'mp4',
         'noplaylist': True,
-        'no_part': True,
-        'progress_hooks': [create_download_hook(status)],
         'quiet': True,
+        'progress_hooks': [create_download_hook(status)],
+        'retries': 3,
         'postprocessors': [{
             'key': 'FFmpegVideoConvertor',
-            'preferedformat': 'mp4'
-        }]
+            'preferedformat': 'mp4',
+        }],
     }
 
     file_path = None
@@ -113,12 +135,12 @@ async def download_and_send(_, message: Message):
             return
 
         if os.path.getsize(file_path) > 2 * 1024 * 1024 * 1024:
-            await status.edit_text("❌ File too large to upload via Telegram bot (limit: 2GB).")
+            await status.edit_text("⚠️ File too large (over 2GB). Telegram bots can't upload.")
             os.remove(file_path)
             return
 
-        # Generate thumbnail using ffmpeg (first frame)
-        os.system(f"ffmpeg -ss 00:00:01 -i '{file_path}' -frames:v 1 -q:v 2 '{thumb_path}' -y")
+        # Generate thumbnail
+        thumb_path = extract_thumbnail(file_path)
 
     except Exception as e:
         await status.edit_text(f"❌ Download error: `{e}`")
@@ -130,18 +152,22 @@ async def download_and_send(_, message: Message):
         await message.reply_video(
             video=file_path,
             caption="✅ Here's your video!",
-            thumb=thumb_path if os.path.exists(thumb_path) else None,
+            thumb=thumb_path if thumb_path and os.path.exists(thumb_path) else None,
+            supports_streaming=True,
             progress=upload_progress,
-            progress_args=(status,),
-            supports_streaming=True
+            progress_args=(status,)
         )
     except Exception as e:
         await status.edit_text(f"❌ Upload failed: `{e}`")
     finally:
-        if file_path and os.path.exists(file_path):
-            os.remove(file_path)
-        if os.path.exists(thumb_path):
-            os.remove(thumb_path)
+        try:
+            if file_path and os.path.exists(file_path):
+                os.remove(file_path)
+            if thumb_path and os.path.exists(thumb_path):
+                os.remove(thumb_path)
+        except:
+            pass
+
 
 if __name__ == "__main__":
     threading.Thread(target=start_health_check, daemon=True).start()
