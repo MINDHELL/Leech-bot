@@ -1,12 +1,12 @@
 import os
 import asyncio
 import time
+import threading
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from config import API_ID, API_HASH, BOT_TOKEN
 from yt_dlp import YoutubeDL
 from health_check import start_health_check
-import threading
 
 bot = Client("leech_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
@@ -53,7 +53,6 @@ def create_download_hook(status_msg: Message):
                     f"ETA: **{eta}**"
                 )
 
-                # Use thread-safe coroutine call for Pyrogram loop
                 asyncio.run_coroutine_threadsafe(status_msg.edit_text(msg), bot.loop)
                 last_edit = now
 
@@ -72,7 +71,7 @@ async def upload_progress(current, total, status_msg: Message):
             f"Size: **{size}**"
         )
         await status_msg.edit_text(msg)
-        await asyncio.sleep(1)  # throttle update frequency
+        await asyncio.sleep(1)
     except:
         pass
 
@@ -92,11 +91,11 @@ async def download_and_send(_, message: Message):
     ydl_opts = {
         'outtmpl': 'downloads/%(title)s.%(ext)s',
         'format': 'bestvideo+bestaudio/best',
-        'max_filesize': 2 * 1024 * 1024 * 1024,
         'merge_output_format': 'mp4',
-        'progress_hooks': [create_download_hook(status)],
+        'max_filesize': 2 * 1024 * 1024 * 1024,  # 2GB
         'noplaylist': True,
-        'no_part': True
+        'no_part': True,
+        'progress_hooks': [create_download_hook(status)],
     }
 
     file_path = None
@@ -107,14 +106,17 @@ async def download_and_send(_, message: Message):
             info = ydl.extract_info(url, download=True)
             file_path = ydl.prepare_filename(info)
 
-        # Check file size before uploading
-        file_size = os.path.getsize(file_path)
-        if file_size > 2 * 1024 * 1024 * 1024:
-            await status.edit_text("❌ File too large for Telegram bots (limit: 2GB).")
+        if not os.path.exists(file_path):
+            await status.edit_text("❌ Failed to download the video file.")
+            return
+
+        # Check Telegram's 2GB limit
+        if os.path.getsize(file_path) > 2 * 1024 * 1024 * 1024:
+            await status.edit_text("❌ File too large to upload via Telegram bot (limit: 2GB).")
             os.remove(file_path)
             return
 
-        # Generate thumbnail using ffmpeg
+        # Generate thumbnail
         os.system(f"ffmpeg -ss 00:00:05 -i '{file_path}' -frames:v 1 -q:v 2 '{thumb_path}'")
 
     except Exception as e:
@@ -140,7 +142,6 @@ async def download_and_send(_, message: Message):
             os.remove(thumb_path)
 
 
-# 🔰 Run the Bot
 if __name__ == "__main__":
     threading.Thread(target=start_health_check, daemon=True).start()
     bot.run()
